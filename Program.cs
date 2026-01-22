@@ -137,9 +137,7 @@ public class PlayerStatus
             var embed = new EmbedBuilder()
                 .WithColor(0xDB78E2)
                 .WithAuthor(name, avatarUrl)
-                .WithImageUrl($"https://cdn.akamai.steamstatic.com/steam/apps/{appId}/header.jpg")
                 .WithCurrentTimestamp();
-
 
             if (!_lastStatuses.ContainsKey(steamId))
             {
@@ -152,30 +150,33 @@ public class PlayerStatus
             bool wasOnline = status.State > 0;
             bool isOnline = currentState > 0;
 
-            // if (isOnline != wasOnline)
-            // {
-            //     if (isOnline) await channel.SendMessageAsync($"");
-            //     else await channel.SendMessageAsync($"");
+            if (isOnline != wasOnline)
+            {
+                string? strStatus = isOnline? "オンライン" : "オフライン";
+                embed.WithDescription($"**{name}**が{strStatus}になりました。");
+                status.State = currentState;
+                var emb = embed.Build();
+                await channel.SendMessageAsync(embed: emb);
+                continue;
+            }
 
-            //     status.State = currentState;
-            // }
-
+            embed.WithImageUrl($"https://cdn.akamai.steamstatic.com/steam/apps/{appId}/header.jpg");
+            
             if (currentGame != status.CurrentGame)
             {
                 if (!string.IsNullOrEmpty(currentGame))
                 {
-                    embed.WithTitle(currentGame);
                     if (status.GameHistory.Contains(currentGame))
                     {
                         if (!string.IsNullOrEmpty(status.CurrentGame))
                         {
-                            embed.WithDescription($"**{name}**が**{status.CurrentGame}**を終了しました");
+                            embed.WithDescription($"**{name}**が**{status.CurrentGame}**を終了しました。");
                             status.GameHistory.Remove(status.CurrentGame);
                         }
                     }
                     else
                     {
-                        embed.WithDescription($"**{name}**が**{currentGame}**を開始しました");
+                        embed.AddField($"**{currentGame}**", $"**{name}**が[**{currentGame}**](https://store.steampowerd.com/app/{appId}/)を開始しました。");
                         status.GameHistory.Add(currentGame);
                     }
                 }
