@@ -176,7 +176,7 @@ public class PlayerStatus
                     }
                     else
                     {
-                        embed.AddField($"**{currentGame}**", $"**{name}**が[**{currentGame}**](https://store.steampowerd.com/app/{appId}/)を開始しました。");
+                        embed.AddField($"**{currentGame}**", $"**{name}**が[**{currentGame}**](https://store.steampowered.com/app/{appId}/)を開始しました。");
                         status.GameHistory.Add(currentGame);
                     }
                 }
