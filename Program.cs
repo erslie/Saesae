@@ -17,37 +17,52 @@ class Program
     private readonly Dictionary<string, PlayerStatus> _lastStatuses = new Dictionary<string, PlayerStatus>();
     private DiscordSocketClient _client;
     private readonly HttpClient _httpClient = new HttpClient();
+    private bool _isMonitoringStarted = false;
 
     static void Main(string[] args) => new Program().MainAsync().GetAwaiter().GetResult();
 
-public class PlayerStatus
-{
-    public string Name { get; }
-    public int State { get; set; }
-    public string CurrentGame { get; set; }
-    public List<string> GameHistory { get; } = new List<string>();
-
-    public PlayerStatus(string name, int state, string gameName)
+    public class PlayerStatus
     {
-        Name = name;
-        State = state;
-        CurrentGame = gameName;
-        if (!string.IsNullOrEmpty(gameName)) GameHistory.Add(gameName);
+        public string Name { get; }
+        public int State { get; set; }
+        public string CurrentGame { get; set; }
+        public List<string> GameHistory { get; } = new List<string>();
+
+        public PlayerStatus(string name, int state, string gameName)
+        {
+            Name = name;
+            State = state;
+            CurrentGame = gameName;
+            if (!string.IsNullOrEmpty(gameName)) GameHistory.Add(gameName);
+        }
     }
-}
 
     public async Task MainAsync()
     {
         DotNetEnv.Env.Load();
 
-        string idsRaw = Environment.GetEnvironmentVariable("STEAM_IDS") ?? "";
-        _targetSteamIds = idsRaw.Split(',')
-            .Select(id => id.Trim())
-            .Where(id => !string.IsNullOrEmpty(id)) 
-            .ToList();
-
         string discordToken = Environment.GetEnvironmentVariable("DISCORD_TOKEN") ?? "";
         _steamApiKey = Environment.GetEnvironmentVariable("STEAM_API_KEY") ?? "";
+
+        string idsRaw = Environment.GetEnvironmentVariable("STEAM_IDS") ?? "";
+        var rawList = idsRaw.Split(',')
+            .Select(id => id.Trim())
+            .Where(id => !string.IsNullOrEmpty(id))
+            .ToList();
+
+        _targetSteamIds = new List<string>();
+
+        foreach (var rawId in rawList)
+        {
+            string resolvedId = await GetSteamIdFromVanityUrl(rawId);
+            if (!string.IsNullOrEmpty(resolvedId))
+            {
+                _targetSteamIds.Add(resolvedId);
+                Console.WriteLine($"Resolved: {rawId} -> {resolvedId}");
+            }
+        }
+
+
 
         if (string.IsNullOrEmpty(discordToken) || string.IsNullOrEmpty(_steamApiKey))
         {
@@ -63,12 +78,37 @@ public class PlayerStatus
         });
 
         _client.Log += (log) => { Console.WriteLine(log.ToString()); return Task.CompletedTask; };
-        _client.Ready += () => { _ = StartMonitoringLoop(); return Task.CompletedTask; };
+        _client.Ready += () => 
+        {
+            if (_isMonitoringStarted) return Task.CompletedTask;
+
+            _isMonitoringStarted = true;
+             _ = StartMonitoringLoop();
+            return Task.CompletedTask;
+        };
 
         await _client.LoginAsync(TokenType.Bot, discordToken);
         await _client.StartAsync();
 
         await Task.Delay(-1);
+    }
+
+    private async Task<string> GetSteamIdFromVanityUrl(string vanityUrl)
+    {
+        if (vanityUrl.Length == 17 && ulong.TryParse(vanityUrl, out _)) return vanityUrl;
+
+        string url = $"https://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/?key={_steamApiKey}&vanityurl={vanityUrl}";
+        
+        var response = await _httpClient.GetStringAsync(url);
+        var json = JObject.Parse(response);
+
+        if ((int)json["response"]["success"] == 1)
+        {
+            return (string)json["response"]["steamid"];
+        }
+        
+        Console.WriteLine($"Error: Failed to resolve vanity URL '{vanityUrl}'");
+        return null;
     }
 
     private async Task StartMonitoringLoop()
