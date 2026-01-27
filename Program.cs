@@ -8,6 +8,10 @@ using Discord.WebSocket;
 using Newtonsoft.Json.Linq;
 using DotNetEnv;
 using System.Runtime.CompilerServices;
+using System.ComponentModel;
+using System.Reflection.Metadata.Ecma335;
+using System.Xml.Serialization;
+using Microsoft.VisualBasic;
 
 class Program
 {
@@ -25,15 +29,93 @@ class Program
     {
         public string Name { get; }
         public int State { get; set; }
-        public string CurrentGame { get; set; }
-        public List<string> GameHistory { get; } = new List<string>();
+        public GameInfo CurrentGame { get; set; }
+        public List<GameInfo> GameHistory { get; } = new List<GameInfo>();
 
-        public PlayerStatus(string name, int state, string gameName)
+        public PlayerStatus(string name, int state, string gameName, string appId)
         {
             Name = name;
             State = state;
-            CurrentGame = gameName;
-            if (!string.IsNullOrEmpty(gameName)) GameHistory.Add(gameName);
+            CurrentGame = new GameInfo(gameName, appId);
+            if (!string.IsNullOrEmpty(gameName)) GameHistory.Add(CurrentGame);
+        }
+
+        public bool IsHistoryExists(GameInfo game)
+        {
+            foreach (GameInfo info in GameHistory)
+            {
+                if (info.Equals(game)) return true;
+            }
+            return false;
+        }
+    }
+
+        public struct GameInfo
+    {
+        public string Name { get; }
+        public string AppId { get; }
+        public GameInfo(string name, string appId)
+        {
+            Name = name;
+            AppId = appId;
+        }
+        public override bool Equals(object obj) => obj is GameInfo other && Name == other.Name;
+        public override int GetHashCode() => Name.GetHashCode();
+    }
+
+    public class SaesaeEmbedBuilder : EmbedBuilder
+    {
+        static public SaesaeEmbedBuilder InitSaesaeEmbedBuilder(string name, string avatarUrl)
+        {
+            var embed = new SaesaeEmbedBuilder();
+            embed.WithColor(0xDB78E2)
+                .WithAuthor(name, avatarUrl)
+                .WithCurrentTimestamp();
+            return embed;
+        }
+
+        public void AlertOnlineStatus(bool isOnline, string playerName)
+        {
+                string? strStatus = isOnline? "オンライン" : "オフライン";
+                this.WithDescription($"**{playerName}**が{strStatus}になりました。");
+        }
+
+        public void StartGame(
+            string appId,
+            string playerName,
+            string gameName)
+        {
+            this.WithGameImageUrl(appId);
+            this.AddStartGameField(appId, playerName, gameName);
+        }
+
+        public void FinishGame(
+            string appId, 
+            string playerName,  
+            string gameName)
+        {
+            this.AddFinishGameField(appId, playerName, gameName);
+        }
+
+        public void AddFinishGameField(
+            string appId,
+            string playerName,
+            string gameName)
+        {
+            this.AddField($"**{gameName}**", $"**{playerName}**が[**{gameName}**](https://store.steampowered.com/app/{appId}/)を終了しました。");
+        }
+
+        private void WithGameImageUrl(string appId)
+        {
+            this.WithImageUrl($"https://cdn.akamai.steamstatic.com/steam/apps/{appId}/header.jpg");
+        }
+
+        private void AddStartGameField(
+            string appId,
+            string playerName,
+            string gameName)
+        {
+            this.AddField($"**{gameName}**", $"**{playerName}**が[**{gameName}**](https://store.steampowered.com/app/{appId}/)を開始しました。");
         }
     }
 
@@ -61,8 +143,6 @@ class Program
                 Console.WriteLine($"Resolved: {rawId} -> {resolvedId}");
             }
         }
-
-
 
         if (string.IsNullOrEmpty(discordToken) || string.IsNullOrEmpty(_steamApiKey))
         {
@@ -174,14 +254,13 @@ class Program
             string avatarUrl = (string)player["avatarfull"];
             int currentState = (int)player["personastate"];
             
-            var embed = new EmbedBuilder()
-                .WithColor(0xDB78E2)
-                .WithAuthor(name, avatarUrl)
-                .WithCurrentTimestamp();
+            var embed = SaesaeEmbedBuilder.InitSaesaeEmbedBuilder(name, avatarUrl);
+
+            var currentGameInfo = new GameInfo(currentGame, appId);
 
             if (!_lastStatuses.ContainsKey(steamId))
             {
-                _lastStatuses[steamId] = new PlayerStatus(name, currentState, currentGame);
+                _lastStatuses[steamId] = new PlayerStatus(name, currentState, currentGame, appId);
                 continue;
             }
 
@@ -192,45 +271,45 @@ class Program
 
             if (isOnline != wasOnline)
             {
-                string? strStatus = isOnline? "オンライン" : "オフライン";
-                embed.WithDescription($"**{name}**が{strStatus}になりました。");
+                embed.AlertOnlineStatus(isOnline, name);
                 status.State = currentState;
                 var emb = embed.Build();
                 await channel.SendMessageAsync(embed: emb);
                 continue;
             }
 
-            embed.WithImageUrl($"https://cdn.akamai.steamstatic.com/steam/apps/{appId}/header.jpg");
+            var currentInfo = new GameInfo(currentGame, appId);
             
-            if (currentGame != status.CurrentGame)
+            if (!currentInfo.Equals(status.CurrentGame))
             {
                 if (!string.IsNullOrEmpty(currentGame))
                 {
-                    if (status.GameHistory.Contains(currentGame))
+                    if (status.IsHistoryExists(currentGameInfo))
                     {
-                        if (!string.IsNullOrEmpty(status.CurrentGame))
+                        if (!string.IsNullOrEmpty(status.CurrentGame.Name))
                         {
-                            embed.WithDescription($"**{name}**が**{status.CurrentGame}**を終了しました。");
+                            embed.FinishGame(appId, name, status.CurrentGame.Name);
                             status.GameHistory.Remove(status.CurrentGame);
                         }
                     }
                     else
                     {
-                        embed.AddField($"**{currentGame}**", $"**{name}**が[**{currentGame}**](https://store.steampowered.com/app/{appId}/)を開始しました。");
-                        status.GameHistory.Add(currentGame);
+                        embed.StartGame(appId, name, currentGame);
+                        status.GameHistory.Add(currentInfo);
                     }
                 }
                 else
                 {
                     foreach (var game in status.GameHistory.ToList())
                     {
-                        embed.WithTitle(game);
-                        embed.WithDescription($"**{name}** が **{game}** を終了しました。");
+                        embed.FinishGame(game.AppId, name, game.Name);
+                        await channel.SendMessageAsync(embed: embed.Build());
                     }
                     status.GameHistory.Clear();
+                    continue;
                 }
 
-                status.CurrentGame = currentGame;
+                status.CurrentGame = currentGameInfo;
                 var emb = embed.Build();
                 await channel.SendMessageAsync(embed: emb);
                 
@@ -238,3 +317,5 @@ class Program
         }
     }
 }
+
+
